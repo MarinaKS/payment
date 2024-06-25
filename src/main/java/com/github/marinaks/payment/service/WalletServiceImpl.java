@@ -12,9 +12,11 @@ import com.github.marinaks.payment.model.Wallet;
 import com.github.marinaks.payment.repository.WalletRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
 
@@ -24,7 +26,8 @@ import java.util.UUID;
 public class WalletServiceImpl implements WalletService {
     private final WalletRepository walletRepository;
 
-    @Transactional
+    private final TransactionTemplate transactionTemplate;
+
     @Override
     public void changeBalance(PaymentDto paymentDto) {
         Payment payment = WalletMapper.toPayment(paymentDto);
@@ -34,16 +37,19 @@ public class WalletServiceImpl implements WalletService {
         int retries = 5;
         while (retries > 0) {
             try {
-                if (paymentDto.getOperationType() == OperationType.DEPOSIT) {
-                    wallet.setBalance(wallet.getBalance() + payment.getAmount());
-                }
-                if (paymentDto.getOperationType() == OperationType.WITHDRAW) {
-                    if (wallet.getBalance() < payment.getAmount()) {
-                        throw new InsufficientFundsException("Недостаточно средств");
+                transactionTemplate.execute((transactionStatus) -> {
+                    if (paymentDto.getOperationType() == OperationType.DEPOSIT) {
+                        wallet.setBalance(wallet.getBalance() + payment.getAmount());
                     }
-                    wallet.setBalance(wallet.getBalance() - payment.getAmount());
-                }
-                walletRepository.save(wallet);
+                    if (paymentDto.getOperationType() == OperationType.WITHDRAW) {
+                        if (wallet.getBalance() < payment.getAmount()) {
+                            throw new InsufficientFundsException("Недостаточно средств");
+                        }
+                        wallet.setBalance(wallet.getBalance() - payment.getAmount());
+                    }
+                    walletRepository.save(wallet);
+                    return null;
+                });
                 return;
             } catch (OptimisticLockingFailureException ex) {
                 retries--;
